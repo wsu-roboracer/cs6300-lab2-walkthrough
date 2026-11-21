@@ -103,6 +103,12 @@
   .code div.hit { background:var(--code-hit); border-left:3px solid #f9e2af;
                   padding-left:calc(.9rem - 3px); }
   .code div.pin { outline:1px dashed #f9e2af; outline-offset:-2px; }
+  .langs { display:inline-flex; gap:0; margin:0 0 10px; border:1px solid #45475a;
+           border-radius:999px; overflow:hidden; }
+  .langs button { appearance:none; border:0; background:transparent; color:inherit;
+           padding:5px 16px; font:inherit; font-size:.82rem; cursor:pointer; }
+  .langs button.on { background:#89b4fa; color:#11111b; font-weight:700; }
+  .langs button:focus-visible { outline:2px solid #89b4fa; outline-offset:-2px; }
   .code .kw { color:#cba6f7; }
   .code .fn { color:#89dceb; }
   .code .nm { color:#fab387; }
@@ -253,6 +259,10 @@
 <body>
 <div class="wrap">
   <h1>Lab 2 &mdash; the code that stops the car</h1>
+  <div class="langs" id="langs" role="group" aria-label="Language">
+    <button type="button" data-lang="py">Python</button>
+    <button type="button" data-lang="cpp">C++</button>
+  </div>
   <p class="sub">The AEB node, run one line at a time against the seven scans
      <code>check_lab2.py</code> actually grades. Every step shows the line executing, the beam it is
      looking at, and the numbers it has worked out so far. <strong>Click any line</strong> for what it
@@ -296,8 +306,9 @@
   <footer>
     Part of <a href="https://wsu-roboracer.github.io/cs6300-course-site/weber_assignments/labs/lab2.html">Lab 2a &mdash; AEB in Simulation</a>
     and <a href="https://wsu-roboracer.github.io/cs6300-course-site/weber_assignments/labs/lab2b.html">Lab 2b &mdash; AEB on the Car</a>.
-    The code shown is the finished Python skeleton; the C++ skeleton has the same structure, the
-    same three topics and the same arithmetic.
+    Use the Python / C++ switch at the top to see either skeleton. Both solve the same
+    problem with the same three topics and the same arithmetic; what differs is how the
+    beams are walked and how the handles are kept alive.
   </footer>
 </div>
 
@@ -308,7 +319,7 @@
 // The code panes. This is safety_node.py with its TODOs written out, so a
 // highlighted line is a line the student can find in their own file.
 // ---------------------------------------------------------------------------
-var CODE = {
+var CODE_PY = {
   init: [
     "import numpy as np",
     "import rclpy",
@@ -388,13 +399,182 @@ var CODE = {
   ]
 };
 
+// The same program in C++. Written to mirror the Python line for line wherever
+// the language allows, so switching between them compares like with like.
+var CODE_CPP = {
+  init: [
+    "#include <cmath>",
+    "#include <limits>",
+    "#include <memory>",
+    "",
+    "#include \"ackermann_msgs/msg/ackermann_drive_stamped.hpp\"",
+    "#include \"nav_msgs/msg/odometry.hpp\"",
+    "#include \"rclcpp/rclcpp.hpp\"",
+    "#include \"sensor_msgs/msg/laser_scan.hpp\"",
+    "",
+    "class Safety : public rclcpp::Node",
+    "{",
+    "public:",
+    "  Safety()",
+    "  : Node(\"safety_node\")",
+    "  {",
+    "    brake_publisher_ = this->create_publisher<AckermannDriveStamped>(",
+    "      \"/drive\", 10);",
+    "",
+    "    scan_subscription_ = this->create_subscription<LaserScan>(",
+    "      \"/scan\", 10,",
+    "      std::bind(&Safety::scan_callback, this, std::placeholders::_1));",
+    "",
+    "    odom_subscription_ = this->create_subscription<Odometry>(",
+    "      \"/ego_racecar/odom\", 10,",
+    "      std::bind(&Safety::odom_callback, this, std::placeholders::_1));",
+    "  }",
+    "",
+    "private:",
+    "  double speed_ = 0.0;",
+    "  double threshold_ = 0.4;        // seconds of iTTC",
+    "",
+    "  // Hold every handle. A subscription you do not store is destroyed",
+    "  // at the end of the constructor and its callback never fires.",
+    "  rclcpp::Publisher<AckermannDriveStamped>::SharedPtr brake_publisher_;",
+    "  rclcpp::Subscription<LaserScan>::SharedPtr scan_subscription_;",
+    "  rclcpp::Subscription<Odometry>::SharedPtr odom_subscription_;"
+  ],
+
+  odom: [
+    "  void odom_callback(const Odometry::ConstSharedPtr odom_msg)",
+    "  {",
+    "    speed_ = odom_msg->twist.twist.linear.x;",
+    "  }"
+  ],
+
+  scan: [
+    "  void scan_callback(const LaserScan::ConstSharedPtr scan_msg)",
+    "  {",
+    "    double best = std::numeric_limits<double>::infinity();",
+    "",
+    "    for (size_t i = 0; i < scan_msg->ranges.size(); ++i) {",
+    "      double angle = scan_msg->angle_min + i * scan_msg->angle_increment;",
+    "      double range_rate = speed_ * std::cos(angle);",
+    "",
+    "      double r = scan_msg->ranges[i];",
+    "      if (!std::isfinite(r) || range_rate <= 0.0) continue;",
+    "",
+    "      best = std::min(best, r / range_rate);",
+    "    }",
+    "",
+    "    if (best < threshold_) {",
+    "      brake();",
+    "    }",
+    "  }"
+  ],
+
+  brake: [
+    "  void brake()",
+    "  {",
+    "    AckermannDriveStamped stop;",
+    "    stop.drive.speed = 0.0;",
+    "    brake_publisher_->publish(stop);",
+    "  }"
+  ],
+
+  car: [
+    "// Lab 2a, in the simulator",
+    "odom_subscription_ = this->create_subscription<Odometry>(",
+    "  \"/ego_racecar/odom\", 10,",
+    "  std::bind(&Safety::odom_callback, this, std::placeholders::_1));",
+    "",
+    "// Lab 2b, on the car -- one topic changes",
+    "odom_subscription_ = this->create_subscription<Odometry>(",
+    "  \"/odom\", 10,",
+    "  std::bind(&Safety::odom_callback, this, std::placeholders::_1));",
+    "",
+    "// and the scan is noisier, so the QoS has to match the driver",
+    "scan_subscription_ = this->create_subscription<LaserScan>(",
+    "  \"/scan\", rclcpp::SensorDataQoS(),",
+    "  std::bind(&Safety::scan_callback, this, std::placeholders::_1));",
+    "",
+    "// the threshold that passed in sim is not the one that works on carpet",
+    "threshold_ = 0.4;      // sim",
+    "threshold_ = 0.6;      // a real car has brake latency"
+  ]
+};
+
+// Python needle -> C++ needle. Everything that pins a note or a frame to a line
+// goes through here, so neither the notes nor the walks had to be duplicated.
+var CPP_NEEDLE = {
+  "super().__init__": "Node(\"safety_node\")",
+  "self.speed = 0.0": "double speed_ = 0.0;",
+  "self.threshold = 0.4": "double threshold_ = 0.4;",
+  "AckermannDriveStamped, '/drive', 10": "\"/drive\", 10);",
+  "self.scan_callback, 10": "\"/scan\", 10,",
+  "'/ego_racecar/odom'": "\"/ego_racecar/odom\", 10,",
+  "def odom_callback": "void odom_callback",
+  "self.speed = odom_msg.twist.twist.linear.x": "speed_ = odom_msg->twist.twist.linear.x;",
+  "def scan_callback": "void scan_callback",
+  "ranges = np.array": "for (size_t i = 0;",
+  "angles = (scan_msg.angle_min": "double angle = scan_msg->angle_min",
+  "np.arange(len(ranges))": "double angle = scan_msg->angle_min",
+  "range_rate = self.speed * np.cos(angles)": "double range_rate = speed_ * std::cos(angle);",
+  "closing = range_rate > 0.0": "if (!std::isfinite(r) || range_rate <= 0.0) continue;",
+  "valid = np.isfinite(ranges)": "if (!std::isfinite(r) || range_rate <= 0.0) continue;",
+  "ittc = np.full": "double best = std::numeric_limits<double>::infinity();",
+  "ittc[valid] = ranges[valid]": "best = std::min(best, r / range_rate);",
+  "np.min(ittc) < self.threshold": "if (best < threshold_) {",
+  "if np.min(ittc) < self.threshold": "if (best < threshold_) {",
+  "self.speed = odom_msg": "speed_ = odom_msg->twist.twist.linear.x;",
+  "def brake": "void brake()",
+  "stop = AckermannDriveStamped()": "AckermannDriveStamped stop;",
+  "stop.drive.speed = 0.0": "stop.drive.speed = 0.0;",
+  "self.brake_publisher.publish(stop)": "brake_publisher_->publish(stop);",
+  "'/odom'": "\"/odom\", 10,",
+  "qos_profile_sensor_data": "rclcpp::SensorDataQoS()",
+  "self.threshold = 0.6": "threshold_ = 0.6;"
+};
+
+// Notes that only make sense in one language. Keyed by the Python needle, so a
+// C++ reader never sees advice about numpy or AttributeError.
+var CPP_NOTE = {
+  "self.scan_callback, 10": {
+    what: "The scan drives everything. This is where the work happens.",
+    items: [["note", "A depth of 10 is fine in the simulator. On the car use <code class='inl'>rclcpp::SensorDataQoS()</code> instead &mdash; see tab 5. Mismatched QoS is the classic Lab 2b failure: both nodes run, no messages arrive."],
+            ["trap", "Store the handle in a member. A subscription assigned to a local goes out of scope at the end of the constructor, and the callback never fires &mdash; the C++ version of forgetting <code class='inl'>self.</code>."]]
+  },
+  "self.speed = 0.0": {
+    what: "The car is assumed stopped until odometry says otherwise.",
+    items: [["why", "A scan can arrive before the first odometry message. Starting at 0.0 means the first <code class='inl'>scan_callback</code> computes no closing speed and does not brake, which is the safe way to be wrong."],
+            ["trap", "Give the member no initialiser and it holds whatever was on the stack. An uninitialised double is not reliably zero, and a large one brakes instantly."]]
+  },
+  "ranges = np.array": {
+    what: "One pass over the beams, doing all of it inline.",
+    items: [["why", "There is no numpy here, so the angle, the range rate and the iTTC are all computed inside the loop for one beam at a time. 1080 beams at 20 Hz is nothing for C++."],
+            ["note", "<code class='inl'>continue</code> does the work that the boolean mask does in Python: a beam that is invalid or not closing is skipped rather than filtered out afterwards."]]
+  },
+  "ittc = np.full": {
+    what: "Start at infinity and keep the smallest.",
+    items: [["why", "Tracking a running minimum avoids building an array at all. If no beam qualifies, <code class='inl'>best</code> is still infinity and nothing brakes."],
+            ["trap", "<code class='inl'>std::numeric_limits&lt;double&gt;::infinity()</code>, not a big number like 1e9. A sentinel that is merely large can still fall under a threshold."]]
+  }
+};
+
+var LANG = "py";
+try { LANG = localStorage.getItem("lab2-lang") || "py"; } catch (e) { LANG = "py"; }
+if (LANG !== "cpp") LANG = "py";
+var CODE = LANG === "cpp" ? CODE_CPP : CODE_PY;
+var DEFAULT_FILE_PY = null, DEFAULT_FILE_CPP = null;
+
 // Line numbers are looked up by text, never typed in. Hard-coded indices are
 // the one thing guaranteed to rot the first time a line moves.
 function L(key, needle) {
   var lines = CODE[key];
+  var want = LANG === "cpp" && CPP_NEEDLE[needle] ? CPP_NEEDLE[needle] : needle;
   for (var i = 0; i < lines.length; i++) {
-    if (lines[i].indexOf(needle) !== -1) return i;
+    if (lines[i].indexOf(want) !== -1) return i;
   }
+  // In Python this is a bug worth shouting about: the listing and the notes
+  // have gone out of step. In C++ a needle with no counterpart just means the
+  // note has nowhere to attach, so lose the note rather than the whole page.
+  if (LANG === "cpp") return -1;
   throw new Error("no line matching " + needle + " in " + key);
 }
 
@@ -406,112 +586,124 @@ function L(key, needle) {
 var LINE_INFO = { init: {}, odom: {}, scan: {}, brake: {}, car: {} };
 
 function info(key, needle, src, what, items) {
-  LINE_INFO[key][L(key, needle)] = { src: src, what: what, items: items };
+  var at = L(key, needle);
+  if (at < 0) return;                    // no counterpart in this language
+  var over = LANG === "cpp" ? CPP_NOTE[needle] : null;
+  var line = CODE[key][at];
+  LINE_INFO[key][at] = {
+    src: LANG === "cpp" ? line.replace(/^\s+/, "") : src,
+    what: over ? over.what : what,
+    items: over ? over.items : items
+  };
 }
 
-info("init", "self.speed = 0.0", "self.speed = 0.0",
-  "The car is assumed stopped until odometry says otherwise.",
-  [["why", "A scan can arrive before the first odometry message. Starting at 0.0 means the first <code class='inl'>scan_callback</code> computes no closing speed and does not brake, which is the safe way to be wrong."],
-   ["trap", "Leave it undefined and the first scan raises <code class='inl'>AttributeError</code> inside a callback, where the traceback is easy to miss and the node keeps running."]]);
+function buildLineInfo() {
+  LINE_INFO = { init: {}, odom: {}, scan: {}, brake: {}, car: {} };
+  info("init", "self.speed = 0.0", "self.speed = 0.0",
+    "The car is assumed stopped until odometry says otherwise.",
+    [["why", "A scan can arrive before the first odometry message. Starting at 0.0 means the first <code class='inl'>scan_callback</code> computes no closing speed and does not brake, which is the safe way to be wrong."],
+     ["trap", "Leave it undefined and the first scan raises <code class='inl'>AttributeError</code> inside a callback, where the traceback is easy to miss and the node keeps running."]]);
 
-info("init", "self.threshold = 0.4", "self.threshold = 0.4",
-  "How many seconds of warning you demand before braking.",
-  [["why", "The threshold is a time, not a distance. That is the whole reason iTTC is worth computing: one number works at every speed."],
-   ["math", "The grader's hardest pair is a wall 0.5 m ahead at 2.5 m/s (0.2 s, must brake) and a wall 1.0 m ahead at 0.25 m/s (4 s, must not). Any threshold between those two passes; 0.4 s sits in the middle with room on both sides."],
-   ["trap", "Too high and you brake in the hallway and fail the last two checks. Too low and you miss the 2.0 m wall at 10 m/s. The lab is really asking you to find a number that satisfies all seven scans at once."]]);
+  info("init", "self.threshold = 0.4", "self.threshold = 0.4",
+    "How many seconds of warning you demand before braking.",
+    [["why", "The threshold is a time, not a distance. That is the whole reason iTTC is worth computing: one number works at every speed."],
+     ["math", "The grader's hardest pair is a wall 0.5 m ahead at 2.5 m/s (0.2 s, must brake) and a wall 1.0 m ahead at 0.25 m/s (4 s, must not). Any threshold between those two passes; 0.4 s sits in the middle with room on both sides."],
+     ["trap", "Too high and you brake in the hallway and fail the last two checks. Too low and you miss the 2.0 m wall at 10 m/s. The lab is really asking you to find a number that satisfies all seven scans at once."]]);
 
-info("init", "AckermannDriveStamped, '/drive', 10", "AckermannDriveStamped, '/drive', 10)",
-  "The brake command goes out on the same topic the driver uses.",
-  [["why", "AEB does not have a special channel. It publishes a normal drive command with speed 0.0, and whatever is downstream obeys the last thing it heard."],
-   ["note", "The grader subscribes to <code class='inl'>/drive</code> and looks for <code class='inl'>abs(speed) &lt; 1e-3</code>. Publishing on any other topic scores zero on every braking check."]]);
+  info("init", "AckermannDriveStamped, '/drive', 10", "AckermannDriveStamped, '/drive', 10)",
+    "The brake command goes out on the same topic the driver uses.",
+    [["why", "AEB does not have a special channel. It publishes a normal drive command with speed 0.0, and whatever is downstream obeys the last thing it heard."],
+     ["note", "The grader subscribes to <code class='inl'>/drive</code> and looks for <code class='inl'>abs(speed) &lt; 1e-3</code>. Publishing on any other topic scores zero on every braking check."]]);
 
-info("init", "self.scan_callback, 10", "LaserScan, '/scan', self.scan_callback, 10)",
-  "The scan drives everything. This is where the work happens.",
-  [["note", "A depth of 10 is fine in the simulator. On the car, use <code class='inl'>qos_profile_sensor_data</code> instead &mdash; see tab 5. Mismatched QoS is the classic Lab 2b failure: both nodes run, no messages arrive."],
-   ["trap", "Keep the reference. <code class='inl'>self.scan_subscription = ...</code>, not a bare call &mdash; an unheld subscription is collected and the callback silently never fires."]]);
+  info("init", "self.scan_callback, 10", "LaserScan, '/scan', self.scan_callback, 10)",
+    "The scan drives everything. This is where the work happens.",
+    [["note", "A depth of 10 is fine in the simulator. On the car, use <code class='inl'>qos_profile_sensor_data</code> instead &mdash; see tab 5. Mismatched QoS is the classic Lab 2b failure: both nodes run, no messages arrive."],
+     ["trap", "Keep the reference. <code class='inl'>self.scan_subscription = ...</code>, not a bare call &mdash; an unheld subscription is collected and the callback silently never fires."]]);
 
-info("init", "'/ego_racecar/odom'", "Odometry, '/ego_racecar/odom', self.odom_callback, 10)",
-  "Where the simulator publishes the car's speed.",
-  [["trap", "This is the one topic name that changes between Lab 2a and Lab 2b. On the real car it is <code class='inl'>/odom</code>. Hard-code it in two places and you will fix one of them."],
-   ["why", "The node needs a speed to compute closing rate. Without odometry <code class='inl'>self.speed</code> stays 0.0, every <code class='inl'>range_rate</code> is 0, and the node never brakes &mdash; a node that looks like it is working perfectly and is doing nothing at all."]]);
+  info("init", "'/ego_racecar/odom'", "Odometry, '/ego_racecar/odom', self.odom_callback, 10)",
+    "Where the simulator publishes the car's speed.",
+    [["trap", "This is the one topic name that changes between Lab 2a and Lab 2b. On the real car it is <code class='inl'>/odom</code>. Hard-code it in two places and you will fix one of them."],
+     ["why", "The node needs a speed to compute closing rate. Without odometry <code class='inl'>self.speed</code> stays 0.0, every <code class='inl'>range_rate</code> is 0, and the node never brakes &mdash; a node that looks like it is working perfectly and is doing nothing at all."]]);
 
-info("odom", "self.speed = odom_msg.twist.twist.linear.x", "self.speed = odom_msg.twist.twist.linear.x",
-  "The forward component of the car's velocity.",
-  [["syntax", "<code class='inl'>twist.twist</code> is not a typo. An <code class='inl'>Odometry</code> message holds a <code class='inl'>TwistWithCovariance</code> in <code class='inl'>.twist</code>, and the plain <code class='inl'>Twist</code> is inside that."],
-   ["why", "<code class='inl'>linear.x</code> is forward in the car's own frame, which is exactly the number the iTTC formula wants. <code class='inl'>linear.y</code> is sideways and <code class='inl'>linear.z</code> is up; neither matters here."],
-   ["note", "Two lines, two points of failure: the callback has to be registered in <code class='inl'>__init__</code> and the field path has to be right. Nothing else happens in this method."]]);
+  info("odom", "self.speed = odom_msg.twist.twist.linear.x", "self.speed = odom_msg.twist.twist.linear.x",
+    "The forward component of the car's velocity.",
+    [["syntax", "<code class='inl'>twist.twist</code> is not a typo. An <code class='inl'>Odometry</code> message holds a <code class='inl'>TwistWithCovariance</code> in <code class='inl'>.twist</code>, and the plain <code class='inl'>Twist</code> is inside that."],
+     ["why", "<code class='inl'>linear.x</code> is forward in the car's own frame, which is exactly the number the iTTC formula wants. <code class='inl'>linear.y</code> is sideways and <code class='inl'>linear.z</code> is up; neither matters here."],
+     ["note", "Two lines, two points of failure: the callback has to be registered in <code class='inl'>__init__</code> and the field path has to be right. Nothing else happens in this method."]]);
 
-info("scan", "ranges = np.array", "ranges = np.array(scan_msg.ranges)",
-  "The distances, as a numpy array so the whole scan can be worked on at once.",
-  [["why", "1080 beams at 20 Hz is 21,600 divisions a second. A Python <code class='inl'>for</code> loop over them will usually keep up and is the slow way to write this; the array form is both faster and shorter."],
-   ["note", "<code class='inl'>scan_msg.ranges</code> arrives as a plain sequence of floats. <code class='inl'>np.array</code> is what makes the later <code class='inl'>ranges[valid]</code> indexing possible."]]);
+  info("scan", "ranges = np.array", "ranges = np.array(scan_msg.ranges)",
+    "The distances, as a numpy array so the whole scan can be worked on at once.",
+    [["why", "1080 beams at 20 Hz is 21,600 divisions a second. A Python <code class='inl'>for</code> loop over them will usually keep up and is the slow way to write this; the array form is both faster and shorter."],
+     ["note", "<code class='inl'>scan_msg.ranges</code> arrives as a plain sequence of floats. <code class='inl'>np.array</code> is what makes the later <code class='inl'>ranges[valid]</code> indexing possible."]]);
 
-info("scan", "angles = (scan_msg.angle_min", "angles = scan_msg.angle_min + np.arange(len(ranges)) * scan_msg.angle_increment",
-  "Beam i points at angle_min + i * angle_increment. Angle 0 is straight ahead.",
-  [["math", "The scan spans 270&deg; over 1080 beams, so <code class='inl'>angle_min</code> is -135&deg; and <code class='inl'>angle_increment</code> is 270/1079 &asymp; 0.25&deg;. Beam 540 lands within a quarter of a degree of dead ahead."],
-   ["trap", "Do not hard-code -135&deg; or 1080. Read both from the message. The real car's lidar can be configured differently, and the same code has to work on tab 5."],
-   ["why", "Without the angles there is no way to tell a wall in front from a wall beside you, which is the difference between the 15-point check and the 3-point one."]]);
+  info("scan", "angles = (scan_msg.angle_min", "angles = scan_msg.angle_min + np.arange(len(ranges)) * scan_msg.angle_increment",
+    "Beam i points at angle_min + i * angle_increment. Angle 0 is straight ahead.",
+    [["math", "The scan spans 270&deg; over 1080 beams, so <code class='inl'>angle_min</code> is -135&deg; and <code class='inl'>angle_increment</code> is 270/1079 &asymp; 0.25&deg;. Beam 540 lands within a quarter of a degree of dead ahead."],
+     ["trap", "Do not hard-code -135&deg; or 1080. Read both from the message. The real car's lidar can be configured differently, and the same code has to work on tab 5."],
+     ["why", "Without the angles there is no way to tell a wall in front from a wall beside you, which is the difference between the 15-point check and the 3-point one."]]);
 
-info("scan", "range_rate = self.speed * np.cos(angles)", "range_rate = self.speed * np.cos(angles)",
-  "How fast the car is closing on each beam.",
-  [["math", "Moving forward at <em>v</em>, the component of that motion along a beam at angle &theta; is <em>v</em>&nbsp;cos&nbsp;&theta;. Straight ahead, cos 0 = 1 and you close at the full speed. At 90&deg;, cos 90&deg; = 0 and you are not closing at all."],
-   ["why", "This single <code class='inl'>cos</code> is what makes the object-beside-the-car check pass. Something 0.4 m off your left shoulder is close, and you will never hit it, and the cosine is the only line that knows the difference."],
-   ["trap", "Use the beam angle, not the steering angle, and work in radians &mdash; <code class='inl'>np.cos</code> takes radians, and the message gives you radians."]]);
+  info("scan", "range_rate = self.speed * np.cos(angles)", "range_rate = self.speed * np.cos(angles)",
+    "How fast the car is closing on each beam.",
+    [["math", "Moving forward at <em>v</em>, the component of that motion along a beam at angle &theta; is <em>v</em>&nbsp;cos&nbsp;&theta;. Straight ahead, cos 0 = 1 and you close at the full speed. At 90&deg;, cos 90&deg; = 0 and you are not closing at all."],
+     ["why", "This single <code class='inl'>cos</code> is what makes the object-beside-the-car check pass. Something 0.4 m off your left shoulder is close, and you will never hit it, and the cosine is the only line that knows the difference."],
+     ["trap", "Use the beam angle, not the steering angle, and work in radians &mdash; <code class='inl'>np.cos</code> takes radians, and the message gives you radians."]]);
 
-info("scan", "closing = range_rate > 0.0", "closing = range_rate > 0.0",
-  "A beam you are not closing on has no time to collision.",
-  [["math", "Behind you, cos &theta; is negative, so <code class='inl'>range_rate</code> is negative and <code class='inl'>range / range_rate</code> comes out <em>negative</em>. A negative iTTC is smaller than any threshold, so without this mask the car brakes for the wall it has just driven past."],
-   ["trap", "This is the bug that passes every braking check and fails every not-braking check. If your node brakes constantly, look here first."],
-   ["why", "It also handles standing still: at speed 0 every <code class='inl'>range_rate</code> is 0, nothing is closing, and a stopped car has no reason to brake."]]);
+  info("scan", "closing = range_rate > 0.0", "closing = range_rate > 0.0",
+    "A beam you are not closing on has no time to collision.",
+    [["math", "Behind you, cos &theta; is negative, so <code class='inl'>range_rate</code> is negative and <code class='inl'>range / range_rate</code> comes out <em>negative</em>. A negative iTTC is smaller than any threshold, so without this mask the car brakes for the wall it has just driven past."],
+     ["trap", "This is the bug that passes every braking check and fails every not-braking check. If your node brakes constantly, look here first."],
+     ["why", "It also handles standing still: at speed 0 every <code class='inl'>range_rate</code> is 0, nothing is closing, and a stopped car has no reason to brake."]]);
 
-info("scan", "valid = np.isfinite(ranges)", "valid = np.isfinite(ranges) & closing",
-  "Throws away inf and nan, and the beams you are not closing on, in one mask.",
-  [["math", "<code class='inl'>np.isfinite</code> is false for both <code class='inl'>inf</code> and <code class='inl'>nan</code>, which is why one call covers both. Comparisons against <code class='inl'>nan</code> are always false, so <code class='inl'>nan &lt; threshold</code> would not brake &mdash; but <code class='inl'>np.min</code> of an array containing <code class='inl'>nan</code> returns <code class='inl'>nan</code>, and then <em>nothing</em> ever brakes."],
-   ["trap", "That is the 15-point check: the grader scatters <code class='inl'>inf</code> every 7th beam and <code class='inl'>nan</code> every 11th through a wall that must be braked for. A single <code class='inl'>nan</code> poisons <code class='inl'>np.min</code> for the entire scan."],
-   ["syntax", "<code class='inl'>&amp;</code>, not <code class='inl'>and</code>. On numpy arrays <code class='inl'>and</code> raises; <code class='inl'>&amp;</code> is the element-wise one."]]);
+  info("scan", "valid = np.isfinite(ranges)", "valid = np.isfinite(ranges) & closing",
+    "Throws away inf and nan, and the beams you are not closing on, in one mask.",
+    [["math", "<code class='inl'>np.isfinite</code> is false for both <code class='inl'>inf</code> and <code class='inl'>nan</code>, which is why one call covers both. Comparisons against <code class='inl'>nan</code> are always false, so <code class='inl'>nan &lt; threshold</code> would not brake &mdash; but <code class='inl'>np.min</code> of an array containing <code class='inl'>nan</code> returns <code class='inl'>nan</code>, and then <em>nothing</em> ever brakes."],
+     ["trap", "That is the 15-point check: the grader scatters <code class='inl'>inf</code> every 7th beam and <code class='inl'>nan</code> every 11th through a wall that must be braked for. A single <code class='inl'>nan</code> poisons <code class='inl'>np.min</code> for the entire scan."],
+     ["syntax", "<code class='inl'>&amp;</code>, not <code class='inl'>and</code>. On numpy arrays <code class='inl'>and</code> raises; <code class='inl'>&amp;</code> is the element-wise one."]]);
 
-info("scan", "ittc = np.full", "ittc = np.full(ranges.shape, np.inf)",
-  "Start every beam at infinity, then fill in only the ones that mean something.",
-  [["why", "Infinity is the honest default: a beam you are not closing on, or whose reading is garbage, gives you no information about a collision. <code class='inl'>inf</code> is never less than the threshold, so it can never cause a brake."],
-   ["trap", "Starting from zeros instead means every invalid beam reads as <em>zero seconds to collision</em> and the car brakes permanently."]]);
+  info("scan", "ittc = np.full", "ittc = np.full(ranges.shape, np.inf)",
+    "Start every beam at infinity, then fill in only the ones that mean something.",
+    [["why", "Infinity is the honest default: a beam you are not closing on, or whose reading is garbage, gives you no information about a collision. <code class='inl'>inf</code> is never less than the threshold, so it can never cause a brake."],
+     ["trap", "Starting from zeros instead means every invalid beam reads as <em>zero seconds to collision</em> and the car brakes permanently."]]);
 
-info("scan", "ittc[valid] = ranges[valid]", "ittc[valid] = ranges[valid] / range_rate[valid]",
-  "The actual formula, applied only where it is meaningful.",
-  [["math", "iTTC = range / range rate. Both sides are masked with <code class='inl'>valid</code>, so no division by zero and no division into a negative can happen &mdash; the mask is what makes the division safe, not a try/except."],
-   ["syntax", "<code class='inl'>ittc[valid] = ...</code> is boolean mask assignment: it writes only to the positions where <code class='inl'>valid</code> is true, and leaves the rest at <code class='inl'>inf</code>."],
-   ["note", "Dividing the whole array and cleaning up afterwards also works, but numpy will warn about the zero division and you have to silence it. Masking first is cleaner."]]);
+  info("scan", "ittc[valid] = ranges[valid]", "ittc[valid] = ranges[valid] / range_rate[valid]",
+    "The actual formula, applied only where it is meaningful.",
+    [["math", "iTTC = range / range rate. Both sides are masked with <code class='inl'>valid</code>, so no division by zero and no division into a negative can happen &mdash; the mask is what makes the division safe, not a try/except."],
+     ["syntax", "<code class='inl'>ittc[valid] = ...</code> is boolean mask assignment: it writes only to the positions where <code class='inl'>valid</code> is true, and leaves the rest at <code class='inl'>inf</code>."],
+     ["note", "Dividing the whole array and cleaning up afterwards also works, but numpy will warn about the zero division and you have to silence it. Masking first is cleaner."]]);
 
-info("scan", "if np.min(ittc) < self.threshold", "if np.min(ittc) < self.threshold:",
-  "One number for the whole scan: the nearest collision in time.",
-  [["why", "You do not care which beam it is, only that something is about to be hit. The minimum over all beams is the worst case, and the worst case is what decides."],
-   ["trap", "<code class='inl'>np.min</code> of an array with any <code class='inl'>nan</code> in it is <code class='inl'>nan</code>, and <code class='inl'>nan &lt; 0.4</code> is false. That is the failure the <code class='inl'>isfinite</code> mask two lines up exists to prevent."],
-   ["note", "In open space every beam is <code class='inl'>inf</code>, so this is <code class='inl'>inf &lt; 0.4</code> &mdash; false, and no brake. The empty case falls out for free."]]);
+  info("scan", "if np.min(ittc) < self.threshold", "if np.min(ittc) < self.threshold:",
+    "One number for the whole scan: the nearest collision in time.",
+    [["why", "You do not care which beam it is, only that something is about to be hit. The minimum over all beams is the worst case, and the worst case is what decides."],
+     ["trap", "<code class='inl'>np.min</code> of an array with any <code class='inl'>nan</code> in it is <code class='inl'>nan</code>, and <code class='inl'>nan &lt; 0.4</code> is false. That is the failure the <code class='inl'>isfinite</code> mask two lines up exists to prevent."],
+     ["note", "In open space every beam is <code class='inl'>inf</code>, so this is <code class='inl'>inf &lt; 0.4</code> &mdash; false, and no brake. The empty case falls out for free."]]);
 
-info("brake", "stop.drive.speed = 0.0", "stop.drive.speed = 0.0",
-  "Zero speed is the brake. There is no brake field.",
-  [["why", "The car follows the last drive command it was given. Commanding zero speed is how you stop it."],
-   ["note", "The grader checks <code class='inl'>abs(speed) &lt; 1e-3</code>, so exactly 0.0 is what to send."]]);
+  info("brake", "stop.drive.speed = 0.0", "stop.drive.speed = 0.0",
+    "Zero speed is the brake. There is no brake field.",
+    [["why", "The car follows the last drive command it was given. Commanding zero speed is how you stop it."],
+     ["note", "The grader checks <code class='inl'>abs(speed) &lt; 1e-3</code>, so exactly 0.0 is what to send."]]);
 
-info("brake", "self.brake_publisher.publish(stop)", "self.brake_publisher.publish(stop)",
-  "And keep publishing it, every scan, for as long as the danger lasts.",
-  [["trap", "Publishing once is not braking. The scan callback runs again in 50 ms, and if the drive node has heard a non-zero command in between, the car moves. The brake holds because the condition keeps being true, not because one message was sent."],
-   ["why", "This is also why there is nothing to un-brake: when the obstacle is gone the condition is false, this line stops running, and the normal drive commands take over again."]]);
+  info("brake", "self.brake_publisher.publish(stop)", "self.brake_publisher.publish(stop)",
+    "And keep publishing it, every scan, for as long as the danger lasts.",
+    [["trap", "Publishing once is not braking. The scan callback runs again in 50 ms, and if the drive node has heard a non-zero command in between, the car moves. The brake holds because the condition keeps being true, not because one message was sent."],
+     ["why", "This is also why there is nothing to un-brake: when the obstacle is gone the condition is false, this line stops running, and the normal drive commands take over again."]]);
 
-info("car", "'/odom'", "Odometry, '/odom', self.odom_callback, 10)",
-  "The one topic name that changes for Lab 2b.",
-  [["trap", "Everything else about the node is identical, which is what makes this easy to miss. The symptom is a node that connects, runs, and never brakes &mdash; because <code class='inl'>self.speed</code> is still 0.0."],
-   ["note", "Check it with <code class='inl'>ros2 topic list</code> on the car before you blame the code."]]);
+  info("car", "'/odom'", "Odometry, '/odom', self.odom_callback, 10)",
+    "The one topic name that changes for Lab 2b.",
+    [["trap", "Everything else about the node is identical, which is what makes this easy to miss. The symptom is a node that connects, runs, and never brakes &mdash; because <code class='inl'>self.speed</code> is still 0.0."],
+     ["note", "Check it with <code class='inl'>ros2 topic list</code> on the car before you blame the code."]]);
 
-info("car", "qos_profile_sensor_data", "LaserScan, '/scan', self.scan_callback, qos_profile_sensor_data)",
-  "Sensor QoS: best effort, not reliable.",
-  [["why", "Lidar drivers publish best-effort, because a scan that arrives late is worthless. A subscriber asking for reliable delivery is <em>incompatible</em>, and ROS answers by delivering nothing at all."],
-   ["trap", "No error, no warning, no messages. <code class='inl'>ros2 topic echo /scan</code> works from the command line (it adapts), which makes it look like the topic is fine and your callback is broken."],
-   ["note", "The grader's own probe uses <code class='inl'>qos_profile_sensor_data</code> on <code class='inl'>/drive</code> for the same reason."]]);
+  info("car", "qos_profile_sensor_data", "LaserScan, '/scan', self.scan_callback, qos_profile_sensor_data)",
+    "Sensor QoS: best effort, not reliable.",
+    [["why", "Lidar drivers publish best-effort, because a scan that arrives late is worthless. A subscriber asking for reliable delivery is <em>incompatible</em>, and ROS answers by delivering nothing at all."],
+     ["trap", "No error, no warning, no messages. <code class='inl'>ros2 topic echo /scan</code> works from the command line (it adapts), which makes it look like the topic is fine and your callback is broken."],
+     ["note", "The grader's own probe uses <code class='inl'>qos_profile_sensor_data</code> on <code class='inl'>/drive</code> for the same reason."]]);
 
-info("car", "self.threshold = 0.6", "self.threshold = 0.6      # a real car has brake latency",
-  "The number that passed in simulation is not the number that works on carpet.",
-  [["why", "In the simulator the brake is instant. On the car there is latency in the ESC, and the tires have to actually grip &mdash; so the time you need is longer than the time to collision alone."],
-   ["note", "Lab 2b asks you to tune it and say what you found. There is no single right answer, which is the point of asking."]]);
+  info("car", "self.threshold = 0.6", "self.threshold = 0.6      # a real car has brake latency",
+    "The number that passed in simulation is not the number that works on carpet.",
+    [["why", "In the simulator the brake is instant. On the car there is latency in the ESC, and the tires have to actually grip &mdash; so the time you need is longer than the time to collision alone."],
+     ["note", "Lab 2b asks you to tune it and say what you found. There is no single right answer, which is the point of asking."]]);
+}
+buildLineInfo();
 
 // ---------------------------------------------------------------------------
 // The scans the grader uses. These are the same seven scenarios as
@@ -1363,8 +1555,23 @@ function measureRun() {
   state.mh = max;
 }
 
+function setLang(lang) {
+  if (lang === LANG) return;
+  LANG = lang;
+  CODE = LANG === "cpp" ? CODE_CPP : CODE_PY;
+  try { localStorage.setItem("lab2-lang", LANG); } catch (e) {}
+  state.pinned = null;          // a pinned line number means nothing across languages
+  buildLineInfo();
+  buildFrames();
+  render();
+}
+
 function render() {
   var stage = document.getElementById("stage");
+
+  Array.prototype.forEach.call(document.querySelectorAll("#langs button"), function (b) {
+    b.classList.toggle("on", b.getAttribute("data-lang") === LANG);
+  });
 
   Array.prototype.forEach.call(document.querySelectorAll("#tabs button"), function (b) {
     b.classList.toggle("on", b.getAttribute("data-mode") === state.mode);
@@ -1516,6 +1723,11 @@ document.getElementById("next").addEventListener("click", function () { stopPlay
 document.getElementById("last").addEventListener("click", function () { stopPlay(); go(state.frames.length - 1); });
 document.getElementById("play").addEventListener("click", togglePlay);
 document.getElementById("nextBeam").addEventListener("click", function () { stopPlay(); nextBeam(); });
+
+document.getElementById("langs").addEventListener("click", function (e) {
+  var b = e.target.closest("button[data-lang]");
+  if (b) setLang(b.getAttribute("data-lang"));
+});
 
 document.addEventListener("keydown", function (e) {
   var t = e.target.tagName;
